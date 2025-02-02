@@ -421,15 +421,15 @@ void process_instruction(){
     NEXT_LATCHES.PC += 2;
 
     switch((line >> 12) & 0xF) {
-        case 0xF: {
+        case 0xF: { //TRAP
             int trapvect8 = line & 0x00FF;
 
-            NEXT_LATCHES.REGS[7] = NEXT_LATCHES.PC;
+            NEXT_LATCHES.REGS[7] = Low16bits(NEXT_LATCHES.PC);
             NEXT_LATCHES.PC = *MEMORY[trapvect8 << 1];
 
             break;
         }
-        case 0x1: {
+        case 0x1: { //ADD
             int *DR = &NEXT_LATCHES.REGS[(line & 0x0E00) >> 9];
             int SR1 = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
             int bit5 = line & 0x0020;
@@ -443,7 +443,7 @@ void process_instruction(){
             setcc(*DR);
             break;
         }
-        case 0x5: {
+        case 0x5: { //AND
             int *DR = &NEXT_LATCHES.REGS[(line & 0x0E00) >> 9];
             int SR1 = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
             int bit5 = line & 0x0020;
@@ -457,7 +457,7 @@ void process_instruction(){
             setcc(*DR);
             break;
         }
-        case 0x0: {
+        case 0x0: { //BR
             int n = (line & 0x0800) >> 11;
             int z = (line & 0x0400) >> 10;
             int p = (line & 0x0200) >> 9;
@@ -467,14 +467,110 @@ void process_instruction(){
                 NEXT_LATCHES.PC = NEXT_LATCHES.PC + (SEXT(PCoffset9, 9) << 1);
             break;
         }
-        case 0xC:
+        case 0xC: { //JMP, RET
+            int BaseR = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
+
+            NEXT_LATCHES.PC = BaseR;
             break;
+        }
+        case 0x4: { //JSR, JSRR
+            int PCoffset11 = line & 0x07FF;
+            int BaseR = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
+            int bit11 = (line & 0x0800) >> 11;
+
+            NEXT_LATCHES.REGS[7] = Low16bits(NEXT_LATCHES.PC);
+            if(bit11 == 0)
+                NEXT_LATCHES.PC = BaseR;
+            else
+                NEXT_LATCHES.PC = NEXT_LATCHES.PC + (SEXT(PCoffset11, 11) << 1);
+            break;
+        }
+        case 0x2: { //LDB
+            int *DR = &NEXT_LATCHES.REGS[(line & 0x0E00) >> 9];
+            int BaseR = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
+            int boffset6 = line & 0x003F;
+
+            int memLoc = BaseR + SEXT(boffset6, 6);
+
+            *DR = Low16bits(SEXT(MEMORY[memLoc >> 1][memLoc % 2], 8));
+            setcc(*DR);
+            break;
+        }
+        case 0x6: { //LDW
+            int *DR = &NEXT_LATCHES.REGS[(line & 0x0E00) >> 9];
+            int BaseR = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
+            int boffset6 = line & 0x003F;
+
+            int memLoc = BaseR + (SEXT(boffset6, 6) << 1);
+
+            *DR = Low16bits((MEMORY[memLoc >> 1][1] << 8) | MEMORY[memLoc >> 1][0]);
+            setcc(*DR);
+            break;
+        }
+        case 0xE: { //LEA
+            int *DR = &NEXT_LATCHES.REGS[(line & 0x0E00) >> 9];
+            int PCoffset9 = line & 0x01FF;
+
+            *DR = Low16bits(NEXT_LATCHES.PC + (SEXT(PCoffset9, 9) << 1));
+            setcc(*DR);
+            break;
+        }
+        case 0x9: { //XOR, NOT
+            int *DR = &NEXT_LATCHES.REGS[(line & 0x0E00) >> 9];
+            int SR1 = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
+            int bit5 = line & 0x0020;
+            int SR2 = CURRENT_LATCHES.REGS[line & 0x0007];
+            int imm5 = line & 0x001F;
+            
+            if(bit5 == 0)
+                *DR = Low16bits(SR1 ^ SR2);
+            else
+                *DR = Low16bits(SR1 ^ SEXT(imm5, 5));
+            setcc(*DR);
+            break;
+        }
+        case 0xD: { //SHF
+            int *DR = &NEXT_LATCHES.REGS[(line & 0x0E00) >> 9];
+            int SR = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
+            int bit5 = line & 0x0020;
+            int bit4 = line & 0x0010;
+            int amount4 = line & 0x000F;
+
+            if(bit4 == 0)
+                *DR = Low16bits(SR << amount4);
+            else if(bit5 == 0)
+                *DR = Low16bits(SR >> amount4);
+            else
+                *DR = Low16bits(SEXT(SR, 16) >> amount4);
+            setcc(*DR);
+            break;
+        }
+        case 0x3: { //STB
+            int SR = CURRENT_LATCHES.REGS[(line & 0x0E00) >> 9];
+            int BaseR = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
+            int boffset6 = line & 0x003F;
+
+            int memLoc = BaseR + SEXT(boffset6, 6);
+            MEMORY[memLoc >> 1][memLoc % 2] = SR & 0x00FF;
+            break;
+        }
+        case 0x7: { //STW
+            int SR = CURRENT_LATCHES.REGS[(line & 0x0E00) >> 9];
+            int BaseR = CURRENT_LATCHES.REGS[(line & 0x01C0) >> 6];
+            int offset6 = line & 0x003F;
+
+            int memLoc = BaseR + (SEXT(offset6, 6) << 1);
+
+            MEMORY[memLoc >> 1][0] = SR & 0x00FF;
+            MEMORY[memLoc >> 1][1] = (SR & 0xFF00) >> 8;
+            break;
+        }
     }
 }
 
 int SEXT(int num, int len) {
     if((num & (1 << (len-1))) != 0)
-        return num | (0xFFFFFFFF << (len));
+        return num | (-1 << (len));
     else
         return num;
 }
